@@ -1,2 +1,2 @@
 # QtWidgetsApplication1_HelloWorld
-LearnQt
+chat-room's client
