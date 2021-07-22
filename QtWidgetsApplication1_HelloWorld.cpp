@@ -1,5 +1,9 @@
 #include "QtWidgetsApplication1_HelloWorld.h"
-
+#include "QKeyEvent"
+#include <cstring>
+#include "rapidjson/writer.h"
+#include "rapidjson/stringbuffer.h"
+using namespace rapidjson;
 //解决中文乱码问题
 #ifdef WIN32
 
@@ -7,26 +11,130 @@
 
 #endif
 
+constexpr auto PublicServerIP = "39.105.86.70";
+constexpr auto ServerPort = 3080;
+constexpr auto UserNameLen = 20;
+
+QtWidgetsApplication1_HelloWorld::~QtWidgetsApplication1_HelloWorld()
+{
+    udpNodePtr->Stop();
+}
+
 QtWidgetsApplication1_HelloWorld::QtWidgetsApplication1_HelloWorld(QWidget *parent)
-    : QMainWindow(parent)
+    : QMainWindow(parent), udpNodePtr(&listener), timer(new QTimer(this))
 {
     ui.setupUi(this);
 
-    //信号与槽
-    connect(ui.pushButton, SIGNAL(clicked()), this, SLOT(showText()));
+    udpNodePtr->Start();
+    timer->start(1000);
+
+    ui.editInput->installEventFilter(this);
+
+    connect(ui.buttonSend, SIGNAL(clicked()), this, SLOT(sendText()));
+    connect(&listener.message, &Message::SigReceive, this, &QtWidgetsApplication1_HelloWorld::showText);
+    connect(&listener.message, &Message::SigReceiveOnlineInfo, this, &QtWidgetsApplication1_HelloWorld::showOnlineInfo);
+    connect(timer, &QTimer::timeout, this, &QtWidgetsApplication1_HelloWorld::sendHeartBeatPacket);
 }
 
-//槽函数
-void QtWidgetsApplication1_HelloWorld::showText()
+void QtWidgetsApplication1_HelloWorld::sendText()
 {
-    QString s;
-    s.append("穷睇眄于中天，极娱游于暇日。\n");
-    s.append("天高地迥，觉宇宙之无穷；\n");
-    s.append("兴尽悲来，识盈虚之有数。\n");
-    s.append("望长安于日下，目吴会于云间。\n");
-    s.append("地势极而南溟深，天柱高而北辰远。\n");
-    s.append("关山难越，谁悲失路之人？\n");
-    s.append("萍水相逢，尽是他乡之客。\n");
+    if (ui.editInput->toPlainText().isEmpty())
+    {
+        return;
+    }
+    StringBuffer buf;
+    Writer<StringBuffer> writer(buf);
 
-    ui.textEdit->setText(s);
+    writer.StartObject();
+
+    writer.Key("msgType");
+    writer.Int(0);
+
+    writer.Key("msgInfo");
+    writer.String(ui.editInput->toPlainText().toStdString().c_str());
+
+    writer.EndObject();
+    
+    udpNodePtr->Send(LPCTSTR(PublicServerIP), ServerPort, (BYTE*)buf.GetString(), buf.GetSize());
+    
+    ui.editInput->clear();
+}
+
+void QtWidgetsApplication1_HelloWorld::sendHeartBeatPacket()
+{
+    StringBuffer buf;
+    Writer<StringBuffer> writer(buf);
+
+    writer.StartObject();
+
+    writer.Key("msgType");
+    writer.Int(1);
+    
+    writer.Key("userName");
+    writer.String(ui.editUserName->text().toStdString().c_str());
+
+    writer.EndObject();
+    
+    udpNodePtr->Send(LPCTSTR(PublicServerIP), ServerPort, (BYTE*)buf.GetString(), buf.GetSize());
+}
+
+void QtWidgetsApplication1_HelloWorld::showOnlineInfo(int onlineNum, QString usersName)
+{
+    ui.textOnlineNumber->setText("在线人数:" + QString::number(onlineNum));
+    ui.textUserOnline->setText(usersName);
+}
+
+void QtWidgetsApplication1_HelloWorld::showText(bool isNotSelfMsg, QString msg)
+{
+    QString outInfo;
+    outInfo.append(msg);
+    outInfo.append("\n\n");
+
+    QTextCursor outputCursor(ui.textOutput->textCursor());
+    QTextBlockFormat blockFormat;
+    QTextCharFormat charFormat;
+    
+    if (!isNotSelfMsg)
+    {
+        blockFormat.setAlignment(Qt::AlignRight);
+        charFormat.setBackground(Qt::green);
+    }
+    else
+    {
+        blockFormat.setAlignment(Qt::AlignLeft);
+        charFormat.setBackground(Qt::white);
+    }
+    outputCursor.setBlockFormat(blockFormat);
+    outputCursor.mergeCharFormat(charFormat);
+    ui.textOutput->setTextCursor(outputCursor);
+    ui.textOutput->append(outInfo);
+}
+
+bool QtWidgetsApplication1_HelloWorld::eventFilter(QObject* obj, QEvent* e)
+{
+    if (obj == ui.editInput)
+    {
+        if (e->type() == QEvent::KeyPress)
+        {
+            QKeyEvent* event = dynamic_cast<QKeyEvent*>(e);
+            if (event->key() == Qt::Key_Return && (event->modifiers() & Qt::ControlModifier))
+            {
+                if (ui.editInput->toPlainText().isEmpty())
+                {
+                    ui.editInput->append("\n");
+                }
+                else
+                {
+                    ui.editInput->append("");
+                }
+                return true;
+            }
+            else if (event->key() == Qt::Key_Return)
+            {
+                sendText();
+                return true;
+            }
+        }
+    }
+    return false;
 }
